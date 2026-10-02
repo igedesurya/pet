@@ -1,0 +1,7 @@
+Create exactly six full-body floor-seated poses in one horizontal left-to-right strip. Use the canonical-base image only for Nori's identity and the six-frame idle guide only for slot count, spacing, centering, and padding. Do not copy any layout marks.
+
+Nori is the same clearly adult 28-year-old anime woman, with mature facial anatomy and a slim, proportionate adult build about seven heads tall when standing. Preserve her small head, teal bob, golden eyes, fitted cream high-hip hoodie, beige opaque fabric cycling shorts with mid-thigh hems, waistband and seams, and cream sneakers. No chibi or childlike features. Keep her outfit opaque.
+
+Show a comfortable neutral seated-on-floor pose in all six frames, with legs naturally folded in an easy cross-legged or softly folded position in front, torso upright and relaxed, hands resting together in her lap. Show a quiet settling sequence through tiny posture shifts, one or two gentle blinks and a small warm smile; first and last poses close. Keep the seated scale, seat baseline, anatomy, clothing and identity consistent. Each complete seated figure, including folded legs and both sneakers, must fit safely inside its own slot.
+
+Output exactly six separate, widely spaced, centered poses in six equal horizontal slots on a flat pure magenta #FF00FF background. No chair, mat, drawn floor, cushion, props, scenery, effects, text, labels, borders, guide marks, shadows, glow, motion blur, extra figure, cropping, or clipping. Clean cel-shaded anime outlines, crisp edges.

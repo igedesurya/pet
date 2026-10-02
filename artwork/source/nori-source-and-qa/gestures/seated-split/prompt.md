@@ -1,0 +1,7 @@
+Create one horizontal sprite strip with exactly 6 complete full-body poses of adult anime character Nori, one centered pose in each of six equal-width slots. Use canonical image for exact identity and idle guide only for six-slot count and spacing. No guide marks in output.
+
+Nori is a mature 28-year-old woman, slim healthy adult proportions about seven heads tall, long legs, defined waist, natural shoulders and hips. Preserve her teal bob, golden eyes, cream hoodie, opaque matte beige mid-thigh athletic cycling shorts with clear waistband and hems, cream sneakers, face and cel-shaded style. No chibi proportions.
+
+She performs a calm seated athletic stretch. In every frame sit upright facing forward, back straight, both legs extended comfortably to the sides in a broad relaxed V, knees softly bent and both complete shoes visible. Keep torso angle, head height, leg angle, spread, and body size almost identical in all six frames. Hands stay resting on the floor beside hips. Show only subtle breathing: tiny shoulder rise and fall, one soft blink, and at most a very slight head dip in one frame, then return upright. Avoid leaning toward the legs; no reaching for feet or knees and no bending at the waist. Calm neutral expression.
+
+Solid #FF00FF magenta background. Exactly six poses, centered with safe padding and no clipping, overlap, or empty slot. No scene, text, marks, shadows, props, or effects.

@@ -56,6 +56,7 @@ final class PetView: NSView {
     private var currentPose: PetPose?
     private var nextVariationAt: Double = 0
     private var standbyCursor = 0
+    private var queuedClips: [String] = []
     private var timer: Timer?
 
     private var dragStart: NSPoint?
@@ -159,6 +160,10 @@ final class PetView: NSView {
     var packID: String { character.packID }
     var standbyChoices: [CharacterSprite.StandbyChoice] { character.standbyChoices }
     var standbyModeID: String { character.standbyModeID }
+    var assetClipNames: [String] { character.assetClipNames }
+    var availableClipNames: [String] { character.namedAnimations.keys.sorted() }
+    var activeClipName: String { overrideName ?? currentClip.rawValue }
+    var pendingClipNames: [String] { queuedClips }
 
     /// Mengganti kegiatan standby (fitness, gym, rumah, atau mode baru di pack.json).
     @discardableResult
@@ -184,6 +189,11 @@ final class PetView: NSView {
     }
 
     private func finishOverride() {
+        if !queuedClips.isEmpty {
+            let next = queuedClips.removeFirst()
+            beginClip(named: next, hold: character.duration(named: next))
+            return
+        }
         overrideName = nil
         currentPose = nil
         if state == .idle, !character.standbyClipNames.isEmpty {
@@ -222,6 +232,19 @@ final class PetView: NSView {
     }
 
     func play(named name: String, hold: Double) {
+        queuedClips.removeAll()
+        beginClip(named: name, hold: hold)
+    }
+
+    @discardableResult
+    func playSequence(_ names: [String]) -> Bool {
+        guard let first = names.first, names.allSatisfy({ character.has(named: $0) }) else { return false }
+        queuedClips = Array(names.dropFirst())
+        beginClip(named: first, hold: character.duration(named: first))
+        return true
+    }
+
+    private func beginClip(named name: String, hold: Double) {
         currentPose = nil
         overrideName = name
         overrideHold = hold
@@ -233,6 +256,7 @@ final class PetView: NSView {
     /// (0 = pakai durasi animasi). Untuk gestur pose (duduk, regang, dst)
     /// dipakai nilai yang lebih panjang supaya terasa "standby".
     func play(_ pose: PetPose, hold: Double? = nil) {
+        queuedClips.removeAll()
         currentPose = pose
         overrideName = pose.clip.rawValue
         overrideHold = hold ?? pose.holdDuration
@@ -242,6 +266,7 @@ final class PetView: NSView {
 
     /// Menghentikan gestur dan kembali ke animasi status.
     func stopPose() {
+        queuedClips.removeAll()
         currentPose = nil
         overrideName = nil
         overrideHold = 0

@@ -1,4 +1,5 @@
 import AppKit
+import CoreFoundation
 
 /// Memuat dan menggambar karakter "Nori" dari `Resources/character`.
 ///
@@ -46,6 +47,26 @@ final class CharacterSprite {
         var label: String
     }
 
+    struct PoseChoice {
+        let characterID: String
+        let name: String
+        let title: String
+    }
+
+    /// Satu daftar lintas karakter, tanpa alias atau duplikasi judul.
+    static func availablePoseChoices() -> [PoseChoice] {
+        availablePacks().flatMap { pack -> [PoseChoice] in
+            guard let directory = root(for: pack.id),
+                  let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return [] }
+            return names.sorted().compactMap { name in
+                let folder = directory.appendingPathComponent(name)
+                guard let frames = try? FileManager.default.contentsOfDirectory(atPath: folder.path),
+                      frames.contains(where: { $0.hasSuffix(".png") }) else { return nil }
+                return PoseChoice(characterID: pack.id, name: name, title: "\(pack.label) · \(name)")
+            }
+        }
+    }
+
     /// Satu pilihan standby. Daftar ini datang dari `pack.json`, jadi mode baru
     /// cukup menambah folder frame dan satu entri, tanpa mengubah kode.
     struct StandbyChoice: Equatable {
@@ -59,6 +80,7 @@ final class CharacterSprite {
 
     private(set) var animations: [Clip: Animation] = [:]
     /// Semua folder frame, termasuk gerak gym/rumah yang tidak ada di enum.
+    private(set) var assetClipNames: [String] = []
     private(set) var namedAnimations: [String: Animation] = [:]
     private(set) var canvasSize = NSSize(width: 192, height: 208)
 
@@ -116,6 +138,7 @@ final class CharacterSprite {
     func load(pack id: String) {
         animations = [:]
         namedAnimations = [:]
+        assetClipNames = []
         standbyClipNames = []
         standbyChoices = []
         canvasSize = NSSize(width: 192, height: 208)
@@ -126,6 +149,7 @@ final class CharacterSprite {
             return
         }
         loadAnimations(from: root)
+        assetClipNames = namedAnimations.keys.sorted()
         applyAliases()
         standbyChoices = CharacterSprite.standbyChoices(in: root, available: namedAnimations)
         let saved = UserDefaults.standard.string(forKey: CharacterSprite.modeKey(for: id))
@@ -194,11 +218,36 @@ final class CharacterSprite {
         }
         guard !frames.isEmpty else { return nil }
         let count = frames.count
+        let metadata = animationMetadata(in: directory)
         return Animation(
             frames: frames,
-            frameDuration: frameDuration(forName: name, frameCount: count),
-            loops: loops(forName: name)
+            frameDuration: frameDurationOverride(metadata?["frame_duration"])
+                ?? frameDuration(forName: name, frameCount: count),
+            loops: metadata?["loops"] as? Bool ?? loops(forName: name)
         )
+    }
+
+    private static func animationMetadata(in directory: URL) -> [String: Any]? {
+        let url = directory.appendingPathComponent("animation.json")
+        guard
+            let data = try? Data(contentsOf: url),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return object
+    }
+
+    /// Clip-local duration in seconds. Invalid values fall back to legacy timing.
+    private static func frameDurationOverride(_ rawValue: Any?) -> Double? {
+        // Ten seconds per frame is enough for deliberate holds while preventing
+        // malformed metadata from making a clip appear stuck.
+        let maximumFrameDuration = 10.0
+        guard
+            let number = rawValue as? NSNumber,
+            CFGetTypeID(number) != CFBooleanGetTypeID()
+        else { return nil }
+        let value = number.doubleValue
+        guard value.isFinite, value > 0, value <= maximumFrameDuration else { return nil }
+        return value
     }
 
     /// Mengisi klip yang tidak punya folder sendiri dari animasi yang sudah dimuat.
@@ -209,12 +258,22 @@ final class CharacterSprite {
             namedAnimations[missing.rawValue] = animation
             animations[missing] = animation
         }
+        // Paket tanpa klip status memakai bangun tidur, bukan kegiatan lain.
+        if let wake = namedAnimations["home_waking_up"] {
+            for clip in Clip.allCases where namedAnimations[clip.rawValue] == nil {
+                namedAnimations[clip.rawValue] = wake
+                animations[clip] = wake
+            }
+        }
     }
 
     private static func frameDuration(forName name: String, frameCount: Int) -> Double {
         let count = max(frameCount, 1)
-        if name.hasPrefix("gym_") || name.hasPrefix("home_") {
+        if name.hasPrefix("gym_") || name.hasPrefix("home_") || name.hasPrefix("pesona") {
             return 5.0 / Double(count)
+        }
+        if name.hasPrefix("action_") {
+            return 1.5 / Double(count)
         }
         guard let clip = Clip(rawValue: name) else { return 0.14 }
         switch clip {
@@ -231,7 +290,7 @@ final class CharacterSprite {
     }
 
     private static func loops(forName name: String) -> Bool {
-        if name.hasPrefix("gym_") || name.hasPrefix("home_") { return true }
+        if name.hasPrefix("gym_") || name.hasPrefix("home_") || name.hasPrefix("pesona") || name.hasPrefix("action_") { return true }
         guard let clip = Clip(rawValue: name) else { return true }
         // gestur sekali jalan; sisanya berulang
         switch clip {
@@ -355,6 +414,7 @@ final class CharacterSprite {
         if draw(named: name, time: time, in: rect) { return true }
         if name != Clip.idle.rawValue, draw(named: Clip.idle.rawValue, time: time, in: rect) { return true }
         if name != Clip.waiting.rawValue, draw(named: Clip.waiting.rawValue, time: time, in: rect) { return true }
+        if name != "home_waking_up", draw(named: "home_waking_up", time: time, in: rect) { return true }
         guard let any = namedAnimations.keys.sorted().first else { return false }
         return draw(named: any, time: time, in: rect)
     }

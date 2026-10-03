@@ -457,6 +457,9 @@ final class Brain {
             ("gym_treadmill_walk", ["treadmill", "lari di tempat"]),
             ("gym_stationary_cycle", ["sepeda statis", "stationary bike", "static bike"]),
             ("home_sweeping", ["menyapu", "nyapu", "sapu lantai"]),
+            ("home_watering_plants", ["menyiram tanaman", "nyiram tanaman", "menyiram bunga", "menyiram tanaman hias"]),
+            ("home_hanging_laundry", ["menjemur pakaian", "menjemur baju", "menjemur cucian", "jemur pakaian", "jemur baju", "jemur laundry", "jemur", "menggantung pakaian", "gantung baju", "gantung cucian"]),
+            ("home_waking_up", ["bangun tidur", "baru bangun", "waking up"]),
             ("home_cooking_stir", ["memasak", "mengaduk", "masak", "memasak"]),
             ("home_washing_dishes", ["cuci piring", "mencuci piring"]),
             ("home_wiping_counter", ["mengelap", "lap meja", "elap meja"]),
@@ -472,6 +475,7 @@ final class Brain {
             ("gym", ["lagi gym", "ke gym", "di gym", "mode gym", "ngegym", "sedang gym"]),
             ("rumah", ["di rumah", "lagi rumah", "mode rumah", "sedang di rumah", "beres-beres"]),
             ("fitness", ["mode fitness", "pemanasan", "lagi stretching", "sedang fitness"]),
+            ("pesona", ["mode pesona", "gerakan pesona"]),
         ]
         for (mode, phrases) in modes where phrases.contains(where: { line.contains($0) }) {
             hint.modeID = mode

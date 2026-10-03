@@ -1,0 +1,14 @@
+---
+description: Nori rumah clothes when editing home animations
+globs: Resources/characters/nori-rumah/**,artwork/home-routines/**
+alwaysApply: false
+---
+
+# Nori rumah outfit
+
+When adding or replacing a clip in `Resources/characters/nori-rumah/`, follow `artwork/home-routines/outfit.md`.
+
+- Top: opaque cream tank top only, hem at the waist.
+- Below the hem: bare legs and bare feet. No leggings, shorts, pants, skirt, or a longer tunic.
+- Reference `Resources/characters/nori-rumah/home_sleeping/00.png`, not the sports character.
+- Keep the approved sleep, idle, tea, reading, eating, and waking frames unless the user asks to replace them.

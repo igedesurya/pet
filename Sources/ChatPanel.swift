@@ -10,7 +10,7 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
     var onModelChange: ((String) -> Void)?
     var onAgentChange: ((Brain.Agent) -> Void)?
     var onSessionChange: ((String) -> Void)?
-    var onPose: ((PetPose) -> Void)?
+    var onNamedPose: ((String, String) -> Void)?
     var onCharacter: ((String) -> Void)?
     var onStandby: ((String) -> Void)?
 
@@ -30,8 +30,10 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
     private let agentPopup = NSPopUpButton()
     private let sessionLabel = NSTextField(labelWithString: "Sesi")
     private let sessionField = NSTextField()
-    private let poseStack = NSStackView()
-    private var poseButtons: [PetPose: NSButton] = [:]
+    private let poseLabel = NSTextField(labelWithString: "Pose")
+    private let posePopup = NSPopUpButton()
+    private let playPoseButton = NSButton()
+    private var poseChoices: [CharacterSprite.PoseChoice] = []
     private let characterLabel = NSTextField(labelWithString: "Karakter")
     private let characterPopup = NSPopUpButton()
     private var characterIDs: [String] = []
@@ -192,13 +194,34 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
         standbyPopup.font = NSFont.systemFont(ofSize: 12)
         content.addSubview(standbyPopup)
 
-        // tombol gestur
-        poseStack.frame = NSRect(x: 12, y: 96, width: 406, height: 80)
-        poseStack.orientation = .horizontal
-        poseStack.spacing = 4
-        poseStack.distribution = .fillEqually
-        content.addSubview(poseStack)
-        buildPoseButtons(in: poseStack)
+        // Semua animasi asli dari seluruh karakter.
+        poseLabel.frame = NSRect(x: 12, y: 154, width: 64, height: 20)
+        poseLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        poseLabel.textColor = NSColor(white: 0.75, alpha: 1)
+        content.addSubview(poseLabel)
+
+        posePopup.frame = NSRect(x: 80, y: 150, width: 250, height: 26)
+        posePopup.autoresizingMask = [.width]
+        posePopup.font = NSFont.systemFont(ofSize: 11)
+        posePopup.target = self
+        posePopup.action = #selector(namedPoseTapped)
+        posePopup.toolTip = "Pilih pose untuk langsung memutarnya"
+        content.addSubview(posePopup)
+
+        playPoseButton.frame = NSRect(x: 338, y: 150, width: 80, height: 26)
+        playPoseButton.autoresizingMask = [.minXMargin]
+        playPoseButton.title = "Putar lagi"
+        playPoseButton.bezelStyle = .rounded
+        playPoseButton.target = self
+        playPoseButton.action = #selector(namedPoseTapped)
+        content.addSubview(playPoseButton)
+
+        let poseHint = NSTextField(labelWithString: "Semua karakter • Pilih pose untuk langsung memutar")
+        poseHint.frame = NSRect(x: 80, y: 124, width: 338, height: 20)
+        poseHint.autoresizingMask = [.width]
+        poseHint.font = NSFont.systemFont(ofSize: 11)
+        poseHint.textColor = NSColor(white: 0.65, alpha: 1)
+        content.addSubview(poseHint)
 
         micButton.frame = NSRect(x: 12, y: 58, width: 168, height: 30)
         micButton.title = "🎤 Tahan untuk bicara"
@@ -228,49 +251,24 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
 
     // MARK: - Aksi
 
-    /// Mengisi baris tombol gestur.
-    private func buildPoseButtons(in stack: NSStackView) {
-        let firstRow = NSStackView()
-        firstRow.orientation = .horizontal
-        firstRow.spacing = 4
-        firstRow.distribution = .fillEqually
-        for pose in [PetPose.duduk, .ketawa, .peluk, .lompat, .lambai, .cium] {
-            firstRow.addArrangedSubview(poseButton(for: pose))
+    func setPoses(_ choices: [CharacterSprite.PoseChoice]) {
+        let selected = posePopup.titleOfSelectedItem
+        poseChoices = choices
+        posePopup.removeAllItems()
+        posePopup.addItems(withTitles: choices.map(\.title))
+        if let selected, choices.contains(where: { $0.title == selected }) {
+            posePopup.selectItem(withTitle: selected)
         }
-
-        let secondRow = NSStackView()
-        secondRow.orientation = .horizontal
-        secondRow.spacing = 4
-        secondRow.distribution = .fillEqually
-        for pose in [PetPose.senyum, .sedih, .menunggu, .bicara, .telutut, .regang] {
-            secondRow.addArrangedSubview(poseButton(for: pose))
-        }
-
-        let thirdRow = NSStackView()
-        thirdRow.orientation = .horizontal
-        thirdRow.spacing = 4
-        thirdRow.distribution = .fillEqually
-        for pose in [PetPose.skinBase, .interaksiBawah1, .interaksiBawah2, .moodIntense] {
-            thirdRow.addArrangedSubview(poseButton(for: pose))
-        }
-
-        stack.orientation = .vertical
-        stack.spacing = 4
-        stack.distribution = .fillEqually
-        stack.addArrangedSubview(firstRow)
-        stack.addArrangedSubview(secondRow)
-        stack.addArrangedSubview(thirdRow)
+        poseLabel.stringValue = "Pose (\(choices.count))"
+        posePopup.isEnabled = !choices.isEmpty
+        playPoseButton.isEnabled = !choices.isEmpty
     }
 
-    private func poseButton(for pose: PetPose) -> NSButton {
-        let button = NSButton(title: pose.buttonLabel, target: self, action: #selector(poseTapped(_:)))
-        button.bezelStyle = .rounded
-        button.controlSize = .small
-        button.font = NSFont.systemFont(ofSize: 11)
-        button.setButtonType(.momentaryPushIn)
-        button.identifier = NSUserInterfaceItemIdentifier(pose.rawValue)
-        poseButtons[pose] = button
-        return button
+    @objc private func namedPoseTapped() {
+        let index = posePopup.indexOfSelectedItem
+        guard poseChoices.indices.contains(index) else { return }
+        let choice = poseChoices[index]
+        onNamedPose?(choice.characterID, choice.name)
     }
 
     func setCharacters(_ packs: [CharacterSprite.Pack], current id: String) {
@@ -305,26 +303,6 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
         let index = standbyPopup.indexOfSelectedItem
         guard standbyIDs.indices.contains(index) else { return }
         onStandby?(standbyIDs[index])
-    }
-
-    @objc private func poseTapped(_ sender: NSButton) {
-        guard
-            let raw = sender.identifier?.rawValue,
-            let pose = PetPose.named(raw)
-        else { return }
-        highlight(pose: pose)
-        onPose?(pose)
-    }
-
-    /// Menandai gestur yang sedang aktif.
-    func highlight(pose: PetPose?) {
-        for (candidate, button) in poseButtons {
-            let isActive = candidate == pose
-            button.bezelColor = isActive
-                ? NSColor(srgbRed: 1.0, green: 0.68, blue: 0.28, alpha: 1)
-                : nil
-            button.contentTintColor = isActive ? .black : nil
-        }
     }
 
     @objc private func sendTapped() {

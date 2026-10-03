@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Menyambungkan papan perintah `~/.pet/poses.command`.
     private func wireBoard() {
+        board.onRequest = { [weak self] request in
+            guard let self else { return ["ok": false, "error": "Pet tidak tersedia."] }
+            return self.handlePetRequest(request)
+        }
         board.onPose = { [weak self] pose in
             self?.playPose(pose, announce: true)
         }
@@ -55,10 +59,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         board.start()
     }
 
+    private func petSnapshot() -> [String: Any] {
+        ["ok": true, "character": petView.packID, "standby_mode": petView.standbyModeID,
+         "current_pose": petView.activeClipName, "queued_poses": petView.pendingClipNames,
+         "available_poses": petView.availableClipNames, "state": petView.state.label]
+    }
+
+    private func handlePetRequest(_ request: [String: Any]) -> [String: Any] {
+        let action = request["action"] as? String ?? ""
+        guard ["status", "character", "play"].contains(action) else {
+            return ["ok": false, "error": "Perintah tidak dikenal."]
+        }
+        if action == "status" { return petSnapshot() }
+        let id = request["character"] as? String ?? petView.packID
+        guard CharacterSprite.availablePacks().contains(where: { $0.id == id }) else {
+            return ["ok": false, "error": "Karakter tidak tersedia: \(id)"]
+        }
+        let previous = petView.packID
+        if id != previous { petView.usePack(id) }
+        if action == "play" {
+            guard let names = request["poses"] as? [String], !names.isEmpty,
+                  names.allSatisfy({ petView.availableClipNames.contains($0) }) else {
+                if id != previous { petView.usePack(previous) }
+                return ["ok": false, "error": "Pose tidak tersedia di karakter \(id)."]
+            }
+            _ = petView.playSequence(names)
+            chatPanel.append(role: "sistem", text: "Gestur: \(names.joined(separator: ", "))")
+        }
+        chatPanel.setCharacters(CharacterSprite.availablePacks(), current: petView.packID)
+        chatPanel.setStandby(petView.standbyChoices, current: petView.standbyModeID)
+        chatPanel.setPoses(CharacterSprite.availablePoseChoices())
+        keepOnScreen()
+        return petSnapshot()
+    }
+
     /// Memutar gestur dan menandainya di panel chat.
     private func playPose(_ pose: PetPose, announce: Bool) {
         petView.play(pose)
-        chatPanel.highlight(pose: pose)
         currentPose = pose
 
         if announce {
@@ -69,7 +106,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         poseResetTimer?.invalidate()
         let timer = Timer(timeInterval: pose.holdDuration, repeats: false) { [weak self] _ in
             guard let self else { return }
-            self.chatPanel.highlight(pose: nil)
             self.currentPose = nil
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -223,14 +259,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.chatPanel.append(role: "sistem", text: "Sesi Hermes: \(sessionID)")
             }
         }
-        chatPanel.onPose = { [weak self] pose in
-            self?.playPose(pose, announce: false)
+        chatPanel.onNamedPose = { [weak self] id, name in
+            guard let self else { return }
+            if self.petView.packID != id { self.petView.usePack(id) }
+            guard self.petView.playSequence([name]) else { return }
+            self.chatPanel.setCharacters(CharacterSprite.availablePacks(), current: id)
+            self.chatPanel.setStandby(self.petView.standbyChoices, current: self.petView.standbyModeID)
+            self.keepOnScreen()
+            self.chatPanel.append(role: "sistem", text: "Pose: \(id) · \(name)")
         }
         chatPanel.onCharacter = { [weak self] id in
             guard let self else { return }
             self.petView.usePack(id)
             let label = CharacterSprite.availablePacks().first { $0.id == id }?.label ?? id
             self.chatPanel.setStandby(self.petView.standbyChoices, current: self.petView.standbyModeID)
+            self.chatPanel.setPoses(CharacterSprite.availablePoseChoices())
             self.chatPanel.append(role: "sistem", text: "Karakter: \(label)")
         }
         chatPanel.onStandby = { [weak self] id in
@@ -239,6 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         chatPanel.setCharacters(CharacterSprite.availablePacks(), current: petView.packID)
         chatPanel.setStandby(petView.standbyChoices, current: petView.standbyModeID)
+        chatPanel.setPoses(CharacterSprite.availablePoseChoices())
         chatPanel.onToggleMute = { [weak self] in
             guard let self else { return true }
             self.speaker.enabled.toggle()
@@ -348,6 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let hint else { return }
         if let mode = hint.modeID, let label = petView.setStandbyMode(mode) {
             chatPanel.setStandby(petView.standbyChoices, current: petView.standbyModeID)
+        chatPanel.setPoses(CharacterSprite.availablePoseChoices())
             chatPanel.append(role: "sistem", text: "Standby: \(label)")
         }
         if let clip = hint.clipName {

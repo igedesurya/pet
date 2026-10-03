@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -55,15 +56,46 @@ POSES: dict[str, str] = {
     "gym_treadmill_walk": "jalan di treadmill",
     "gym_stationary_cycle": "sepeda statis",
     "home_sweeping": "menyapu lantai",
+    "home_watering_plants": "menyiram tanaman",
+    "home_hanging_laundry": "menjemur pakaian di jemuran",
     "home_cooking_stir": "memasak dan mengaduk",
     "home_washing_dishes": "mencuci piring",
     "home_wiping_counter": "mengelap meja",
     "home_folding_laundry": "melipat cucian",
     "home_washing_hair": "membilas rambut",
+    "home_drinking_tea": "minum teh (paket Nori rumah)",
+    "home_reading_book": "membaca buku (paket Nori rumah)",
+    "home_eating": "makan (paket Nori rumah)",
+    "home_waking_up": "bangun dan meregangkan badan",
+    "home_sleeping": "tidur santai (paket Nori rumah)",
+    "pesona_wave": "melambai sambil duduk" ,
+    "pesona_nod": "mengangguk setuju" ,
+    "pesona_shrug": "mengangkat bahu" ,
+    "pesona_check_watch": "melihat jam tangan" ,
+    "pesona_hand_heart": "membentuk hati dengan tangan" ,
+    "pesona_listening_v2": "mendengarkan dengan perhatian (Pesona v2)",
+    "pesona_thinking_v2": "berpikir sambil menyentuh pelipis (Pesona v2)",
+    "pesona_typing_v2": "mengetik di laptop (Pesona v2)",
+    "pesona_breathing_v2": "bernapas santai (Pesona v2)",
+    "pesona_clapping_v2": "tepuk tangan kecil menyemangati (Pesona v2)",
+    "pesona_v2": "peregangan duduk versi dewasa dengan tanktop krem",
+    "pesona_rest_v2": "istirahat duduk versi dewasa dengan tanktop krem",
+    "pesona_hair_v2": "merapikan rambut versi dewasa dengan tanktop krem",
+    "pesona_knee_v2": "menyesuaikan postur duduk versi dewasa dengan tanktop krem",
+    "pesona": "duduk menghadap depan, kaki terbuka lebar, tangan ke atas lalu ke bawah (paket Pesona)",
+    "pesona_rest": "duduk diam menatap, kaki terbuka lebar (paket Pesona)",
+    "pesona_hair": "merapikan rambut sambil duduk, kaki terbuka lebar (paket Pesona)",
+    "pesona_knee": "angkat satu kaki lalu berpangku tangan di lutut (paket Pesona)",
 }
 
 # Nama protokol di AGENTS.md ditulis ke pet sebagai gestur yang punya frame.
 POSE_ALIASES = {
+    "bangun_tidur": "home_waking_up",
+    "masak": "home_cooking_stir",
+    "nyapu": "home_sweeping",
+    "nyiram_tanaman": "home_watering_plants",
+    "jemur_pakaian": "home_hanging_laundry",
+    "jemur": "home_hanging_laundry",
     "hide_clothes": "skin_base",
     "horny": "mood_intense",
     "orgasme": "mood_intense",
@@ -127,7 +159,110 @@ def read_config() -> dict[str, Any]:
 
 
 def visible_poses() -> list[str]:
-    return list(POSES.keys())
+    return sorted({name for pack in character_catalog() for name in
+                   [*(pose["name"] for pose in pack["poses"]), *pack["aliases"]]})
+
+
+LEGACY_CLIPS = {
+    "duduk": "sitting", "ketawa": "laughing", "peluk": "hug",
+    "lompat": "jumping", "lambai": "waving", "cium": "kiss",
+    "senyum": "okay-smile", "sedih": "failed", "menunggu": "waiting",
+    "bicara": "talking", "telutut": "hand-on-knee", "regang": "seated-split",
+    **POSE_ALIASES,
+}
+# Mirror CharacterSprite.fallbackAlias; report aliases separately from actual assets.
+FALLBACK_CLIPS = {
+    "talking": "waiting", "kiss": "waving", "hug": "idle",
+    "okay-smile": "idle", "laughing": "idle", "sitting": "seated-double-leg-raise",
+    "seated-split": "standby-stretch", "hand-on-knee": "standby-stretch",
+    "skin_base": "idle", "interaksi_bawah_1": "seated-double-leg-raise",
+    "interaksi_bawah_2": "seated-straddle-leg-raise", "mood_intense": "idle",
+}
+
+
+def character_catalog() -> list[dict[str, Any]]:
+    """Discover installed assets, falling back to source for an unbuilt checkout."""
+    bundled = PET_DIR / "bin/Pet.app/Contents/Resources"
+    resource = bundled if (bundled / "character").is_dir() else PET_DIR / "Resources"
+    roots = [("nori", "Nori", resource / "character")]
+    extra = resource / "characters"
+    if extra.is_dir():
+        roots.extend((p.name, p.name, p) for p in sorted(extra.iterdir()) if p.is_dir() and p.name != "nori")
+    catalog = []
+    for identifier, label, root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            metadata = json.loads((root / "pack.json").read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict):
+                metadata = {}
+        except (OSError, json.JSONDecodeError):
+            metadata = {}
+        poses = []
+        for folder in sorted(root.iterdir()):
+            if not folder.is_dir():
+                continue
+            frames = list(folder.glob("*.png"))
+            if frames:
+                poses.append({"name": folder.name, "frames": len(frames),
+                              "description": POSES.get(normalize_pose(folder.name), folder.name.replace("_", " ").replace("-", " "))})
+        canonical = {normalize_pose(p["name"]): p["name"] for p in poses}
+        available = dict(canonical)
+        for alias, target in FALLBACK_CLIPS.items():
+            key = normalize_pose(alias)
+            if key not in available and normalize_pose(target) in available:
+                available[key] = available[normalize_pose(target)]
+        for alias, target in LEGACY_CLIPS.items():
+            if normalize_pose(target) in available:
+                available[alias] = available[normalize_pose(target)]
+        aliases = {key: target for key, target in available.items() if key != target}
+        modes = metadata.get("modes", [])
+        if not isinstance(modes, list):
+            modes = []
+        catalog.append({"id": identifier, "name": metadata.get("label") or label,
+                        "poses": poses, "aliases": aliases, "standby_modes": modes})
+    return catalog
+
+
+def find_character(raw: str, catalog: list[dict[str, Any]]) -> dict[str, Any] | None:
+    key = normalize_pose(raw)
+    return next((pack for pack in catalog if key in
+                 (normalize_pose(pack["id"]), normalize_pose(pack["name"]))), None)
+
+
+def resolve_clip(pack: dict[str, Any], pose: str) -> str | None:
+    key = normalize_pose(pose)
+    actual = {normalize_pose(item["name"]): item["name"] for item in pack["poses"]}
+    return actual.get(key) or pack["aliases"].get(key)
+
+
+def request_pet(payload: dict[str, Any], timeout: float = 5.0) -> dict[str, Any]:
+    """Queue atomically and wait for the running app's acknowledgement."""
+    requests = PET_HOME / "command-requests"
+    results = PET_HOME / "command-results"
+    requests.mkdir(parents=True, exist_ok=True)
+    results.mkdir(parents=True, exist_ok=True)
+    identifier = str(uuid.uuid4())
+    pending = requests / (identifier + ".json")
+    temporary = requests / (identifier + ".tmp")
+    answer = results / pending.name
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    temporary.replace(pending)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            response = json.loads(answer.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            time.sleep(0.05)
+            continue
+        answer.unlink(missing_ok=True)
+        return response
+    pending.unlink(missing_ok=True)
+    return {"ok": False, "error": "Pet belum mengonfirmasi perintah. Pastikan aplikasi sudah memakai build terbaru; perintah mungkin sedang diproses."}
+
+
+def json_result(payload: dict[str, Any]) -> dict[str, Any]:
+    return text_result(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 # ------------------------------------------------------------------- tool MCP
@@ -144,6 +279,10 @@ def tool_definitions() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "character": {
+                        "type": "string",
+                        "description": "ID atau nama karakter dari list_characters. Karakter diganti langsung sebelum pose diputar.",
+                    },
                     "pose": {
                         "type": "string",
                         "enum": visible_poses(),
@@ -159,8 +298,22 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "list_poses",
-            "description": "Tampilkan semua gestur yang bisa dilakukan si pet.",
+            "description": "Katalog pose aktual dan alias per karakter; tanpa character menampilkan semua karakter.",
+            "inputSchema": {"type": "object", "properties": {
+                "character": {"type": "string", "description": "ID atau nama karakter (opsional)."}
+            }},
+        },
+        {
+            "name": "list_characters",
+            "description": "Daftar semua karakter, nama pose aktual, jumlah frame, alias dan mode standby. Dibaca langsung dari aset terpasang.",
             "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "set_pet_character",
+            "description": "Ganti karakter pet langsung tanpa restart. Pilih ID dari list_characters.",
+            "inputSchema": {"type": "object", "properties": {
+                "character": {"type": "string"}
+            }, "required": ["character"]},
         },
         {
             "name": "get_pet_status",
@@ -213,55 +366,76 @@ def error_result(text: str) -> dict[str, Any]:
 
 
 def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if name in ("list_characters", "list_poses"):
+        catalog = character_catalog()
+        raw = arguments.get("character")
+        if raw is not None:
+            if not isinstance(raw, str) or not (pack := find_character(raw, catalog)):
+                return error_result("Karakter tidak dikenal. Gunakan list_characters.")
+            catalog = [pack]
+        return json_result({"characters": catalog})
+
+    if name == "set_pet_character":
+        raw = arguments.get("character")
+        catalog = character_catalog()
+        if not isinstance(raw, str) or not (pack := find_character(raw, catalog)):
+            return error_result("Karakter tidak dikenal. Gunakan list_characters.")
+        if not is_running():
+            return error_result("Pet sedang tidak jalan. Jalankan start_pet dulu.")
+        response = request_pet({"action": "character", "character": pack["id"]})
+        return json_result(response) if response.get("ok") else error_result(response.get("error", "Gagal mengganti karakter."))
+
     if name == "play_pose":
-        requested: list[str] = []
+        requested = []
         single = arguments.get("pose")
-        if isinstance(single, str) and single:
+        if isinstance(single, str) and single.strip():
             requested.append(single)
         many = arguments.get("poses")
-        if isinstance(many, list):
-            requested.extend(str(item) for item in many if item)
-
+        if many is not None:
+            if not isinstance(many, list) or not all(isinstance(item, str) and item.strip() for item in many):
+                return error_result("poses harus berupa daftar nama pose yang tidak kosong.")
+            requested.extend(many)
         if not requested:
-            return error_result("Sebutkan minimal satu gestur, misalnya \"duduk\".")
-
-        unknown = [item for item in requested if normalize_pose(item) not in POSES]
-        if unknown:
-            return error_result(
-                "Gestur tidak dikenal: " + ", ".join(unknown)
-                + ". Yang tersedia: " + ", ".join(visible_poses()) + "."
-            )
-
+            return error_result('Sebutkan minimal satu gestur, misalnya "duduk".')
         if not is_running():
-            return error_result(
-                "Pet sedang tidak jalan. Jalankan start_pet dulu."
-            )
-
-        for item in requested:
-            send_pose(item)
-
-        described = ", ".join(
-            f"{normalize_pose(item)} ({POSES[normalize_pose(item)]})" for item in requested
-        )
-        return text_result(f"Gestur dikirim ke pet: {described}.")
-
-    if name == "list_poses":
-        lines = [f"- {key}: {value}" for key, value in POSES.items()]
-        return text_result("Gestur yang tersedia:\n" + "\n".join(lines))
+            return error_result("Pet sedang tidak jalan. Jalankan start_pet dulu.")
+        catalog = character_catalog()
+        explicit = arguments.get("character")
+        if explicit is not None:
+            if not isinstance(explicit, str) or not (pack := find_character(explicit, catalog)):
+                return error_result("Karakter tidak dikenal. Gunakan list_characters.")
+        else:
+            status = request_pet({"action": "status"})
+            if not status.get("ok"):
+                return error_result(status.get("error", "Gagal membaca karakter aktif."))
+            pack = find_character(status["character"], catalog)
+            if not pack or not all(resolve_clip(pack, pose) for pose in requested):
+                candidates = [item for item in catalog if all(resolve_clip(item, pose) for pose in requested)]
+                if len(candidates) != 1:
+                    choices = ", ".join(item["id"] for item in candidates)
+                    return error_result("Pilih character untuk pose ini: " + (choices or "tidak ada karakter yang menyediakan semua pose tersebut") + ". Gunakan list_characters.")
+                pack = candidates[0]
+        missing = [pose for pose in requested if not resolve_clip(pack, pose)]
+        if missing:
+            return error_result("Pose tidak tersedia di " + pack["id"] + ": " + ", ".join(missing) + ". Gunakan list_poses dengan character yang sama.")
+        clips = [resolve_clip(pack, pose) for pose in requested]
+        response = request_pet({"action": "play", "character": pack["id"], "poses": clips})
+        if not response.get("ok"):
+            return error_result(response.get("error", "Gagal memutar pose."))
+        response["accepted_poses"] = clips
+        response["message"] = "Pose pertama dimulai; pose berikutnya diantrekan dan diputar berurutan."
+        return json_result(response)
 
     if name == "get_pet_status":
         config = read_config()
-        status = "jalan" if is_running() else "mati"
-        pid = pet_pid()
-        models = config.get("models") or []
-        current = config.get("model") or "(default OpenCode)"
-        detail = [
-            f"Status: {status}" + (f" (pid {pid})" if pid else ""),
-            f"Model aktif: {current}",
-            f"Model tersedia: {', '.join(models) if models else '(tidak ada)'}",
-            f"Gestur tersedia: {', '.join(visible_poses())}",
-        ]
-        return text_result("\n".join(detail))
+        response = {"running": is_running(), "pid": pet_pid(),
+                    "agent": config.get("agent", "opencode"), "model": config.get("model"),
+                    "characters": [{"id": item["id"], "name": item["name"], "pose_count": len(item["poses"])}
+                                   for item in character_catalog()]}
+        if response["running"]:
+            status = request_pet({"action": "status"})
+            response["app"] = status
+        return json_result(response)
 
     if name == "open_pet_chat":
         if not is_running():

@@ -12,6 +12,7 @@ swiftc \
   -O \
   -swift-version 5 \
   -framework AppKit \
+  -framework WebKit \
   -framework AVFoundation \
   -framework Speech \
   "$ROOT/Sources/"*.swift \
@@ -25,6 +26,9 @@ cp -R "$ROOT/Resources/character" "$APP/Contents/Resources/character"
 if [ -d "$ROOT/Resources/characters" ]; then
   cp -R "$ROOT/Resources/characters" "$APP/Contents/Resources/characters"
 fi
+
+rm -rf "$APP/Contents/Resources/vrm"
+cp -R "$ROOT/Resources/vrm" "$APP/Contents/Resources/vrm"
 
 # ad-hoc sign supaya macOS bisa mengingat izin mikrofon & speech recognition
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || \

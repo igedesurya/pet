@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var petWindow: PetWindow!
@@ -26,6 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildStatusItem()
         buildPet()
         buildChat()
+        petView.onVRMError = { [weak self] message in
+            self?.chatPanel.append(role: "sistem", text: "VRM: " + message)
+        }
+        if let path = UserDefaults.standard.string(forKey: VRMView.preferenceKey),
+           FileManager.default.fileExists(atPath: path) {
+            petView.useVRM(URL(fileURLWithPath: path))
+        }
         wireBrain()
         wireVoice()
         wireBoard()
@@ -60,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func petSnapshot() -> [String: Any] {
-        ["ok": true, "character": petView.packID, "standby_mode": petView.standbyModeID,
+        ["ok": true, "renderer": petView.is3D ? "vrm" : "png", "character": petView.packID, "standby_mode": petView.standbyModeID,
          "current_pose": petView.activeClipName, "queued_poses": petView.pendingClipNames,
          "available_poses": petView.availableClipNames, "state": petView.state.label]
     }
@@ -72,23 +80,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if action == "status" { return petSnapshot() }
         let id = request["character"] as? String ?? petView.packID
-        guard CharacterSprite.availablePacks().contains(where: { $0.id == id }) else {
+        if id == "3D" {
+            guard petView.is3D else {
+                return ["ok": false, "error": "Karakter 3D belum dimuat. Pilih 'Gunakan Karakter 3D', lalu ulangi perintah."]
+            }
+        } else if !CharacterSprite.availablePacks().contains(where: { $0.id == id }) {
             return ["ok": false, "error": "Karakter tidak tersedia: \(id)"]
         }
-        let previous = petView.packID
-        if id != previous { petView.usePack(id) }
+
+        var names: [String] = []
         if action == "play" {
-            guard let names = request["poses"] as? [String], !names.isEmpty,
-                  names.allSatisfy({ petView.availableClipNames.contains($0) }) else {
-                if id != previous { petView.usePack(previous) }
+            guard let requestedNames = request["poses"] as? [String], !requestedNames.isEmpty else {
                 return ["ok": false, "error": "Pose tidak tersedia di karakter \(id)."]
             }
-            _ = petView.playSequence(names)
+            let validNames: Set<String>
+            if id == "3D" {
+                validNames = VRMMotion.names
+            } else if id == petView.packID {
+                validNames = Set(petView.availableClipNames)
+            } else {
+                validNames = Set(CharacterSprite.availablePoseChoices()
+                    .filter { $0.characterID == id }
+                    .map(\.name))
+            }
+            guard requestedNames.allSatisfy({ validNames.contains($0) }) else {
+                return ["ok": false, "error": "Pose tidak tersedia di karakter \(id)."]
+            }
+            names = requestedNames
+        }
+
+        // All input is validated before changing the active character.
+        if id != petView.packID, id != "3D" { petView.usePack(id) }
+        if action == "play" {
+            guard petView.playSequence(names) else {
+                return ["ok": false, "error": "Mode VRM saat ini mendukung satu gestur per perintah."]
+            }
             chatPanel.append(role: "sistem", text: "Gestur: \(names.joined(separator: ", "))")
         }
-        chatPanel.setCharacters(CharacterSprite.availablePacks(), current: petView.packID)
-        chatPanel.setStandby(petView.standbyChoices, current: petView.standbyModeID)
-        chatPanel.setPoses(CharacterSprite.availablePoseChoices())
+        syncCharacterControls()
         keepOnScreen()
         return petSnapshot()
     }
@@ -239,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         chatPanel.onMicDown = { [weak self] in self?.beginListening() }
         chatPanel.onMicUp = { [weak self] in self?.voice.stop() }
         chatPanel.onScale = { [weak self] value in self?.applyScale(value) }
+        petView.onRendererChange = { [weak self] in self?.syncCharacterControls() }
         chatPanel.onModelChange = { [weak self] model in
             guard let self else { return }
             self.brain.setModel(model)
@@ -261,28 +291,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         chatPanel.onNamedPose = { [weak self] id, name in
             guard let self else { return }
-            if self.petView.packID != id { self.petView.usePack(id) }
-            guard self.petView.playSequence([name]) else { return }
-            self.chatPanel.setCharacters(CharacterSprite.availablePacks(), current: id)
-            self.chatPanel.setStandby(self.petView.standbyChoices, current: self.petView.standbyModeID)
+            if id == "3D" {
+                guard self.petView.is3D, self.petView.playIfAvailable(name) else { return }
+            } else {
+                if self.petView.packID != id { self.petView.usePack(id) }
+                guard self.petView.playSequence([name]) else { return }
+            }
+            self.syncCharacterControls()
             self.keepOnScreen()
-            self.chatPanel.append(role: "sistem", text: "Pose: \(id) · \(name)")
+            let label = self.petView.is3D ? (VRMMotion.byName[name]?.label ?? name) : name
+            self.chatPanel.append(role: "sistem", text: "Pose: \(label)")
         }
         chatPanel.onCharacter = { [weak self] id in
             guard let self else { return }
+            if id == "3D" {
+                self.menuUse3D()
+                return
+            }
             self.petView.usePack(id)
+            self.syncCharacterControls()
             let label = CharacterSprite.availablePacks().first { $0.id == id }?.label ?? id
-            self.chatPanel.setStandby(self.petView.standbyChoices, current: self.petView.standbyModeID)
-            self.chatPanel.setPoses(CharacterSprite.availablePoseChoices())
             self.chatPanel.append(role: "sistem", text: "Karakter: \(label)")
         }
         chatPanel.onStandby = { [weak self] id in
             guard let self, let label = self.petView.setStandbyMode(id) else { return }
             self.chatPanel.append(role: "sistem", text: "Standby: \(label)")
         }
-        chatPanel.setCharacters(CharacterSprite.availablePacks(), current: petView.packID)
-        chatPanel.setStandby(petView.standbyChoices, current: petView.standbyModeID)
-        chatPanel.setPoses(CharacterSprite.availablePoseChoices())
+        syncCharacterControls()
         chatPanel.onToggleMute = { [weak self] in
             guard let self else { return true }
             self.speaker.enabled.toggle()
@@ -308,6 +343,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         chatPanel.orderOut(nil)
+    }
+
+    /// Sinkronkan pilihan karakter dan pose sesudah renderer benar-benar siap.
+    private func syncCharacterControls() {
+        guard chatPanel != nil, petView != nil else { return }
+        chatPanel.setCharacters(CharacterSprite.availablePacks(), current: petView.packID)
+        chatPanel.setStandby(petView.standbyChoices, current: petView.standbyModeID)
+        chatPanel.setPoses(petView.is3D ? VRMMotion.choices : CharacterSprite.availablePoseChoices())
     }
 
     /// Menaruh panel chat di samping pet, dan tetap di dalam layar.
@@ -373,6 +416,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
+        if petView.is3D, let motion = VRMMotion.chatCommand(trimmed) {
+            chatPanel.append(role: "kamu", text: trimmed)
+            petView.play(named: motion.name, hold: motion.duration)
+            chatPanel.append(role: "sistem", text: "Gerakan 3D: \(motion.label)")
+            return
+        }
 
         if brain.isBusy {
             chatPanel.append(role: "kamu", text: trimmed)
@@ -496,6 +546,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Perkecil Pet", action: #selector(menuZoomOut), keyEquivalent: "-")
         menu.addItem(withTitle: "Ukuran Normal", action: #selector(menuZoomReset), keyEquivalent: "0")
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "Gunakan Karakter 3D", action: #selector(menuUse3D), keyEquivalent: "")
+        menu.addItem(withTitle: "Impor Karakter 3D (.vrm)…", action: #selector(menuImportVRM), keyEquivalent: "")
+        if petView.is3D {
+            let motionItem = NSMenuItem(title: "Gerakan 3D", action: nil, keyEquivalent: "")
+            let motionMenu = NSMenu(title: "Gerakan 3D")
+            for motion in VRMMotion.entries {
+                let item = NSMenuItem(title: motion.label, action: #selector(menuPlayVRMMotion(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = motion.name
+                motionMenu.addItem(item)
+            }
+            motionItem.submenu = motionMenu
+            menu.addItem(motionItem)
+            menu.addItem(withTitle: "Kembali ke Karakter PNG", action: #selector(menuUseSprites), keyEquivalent: "")
+        }
         menu.addItem(withTitle: "Buka Config Model…", action: #selector(menuOpenConfig), keyEquivalent: "")
         menu.addItem(withTitle: "Buka Papan Gestur…", action: #selector(menuOpenPoses), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
@@ -508,6 +573,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
         }
     }
+
+    @objc private func menuImportVRM() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "vrm") ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Pilih model VRM hasil ekspor VRoid Studio."
+        guard panel.runModal() == .OK, let source = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: source)
+            guard data.count >= 12, Array(data.prefix(4)) == [0x67, 0x6c, 0x54, 0x46] else {
+                throw NSError(domain: "PetVRM", code: 1, userInfo: [NSLocalizedDescriptionKey: "File bukan VRM biner yang valid."])
+            }
+            let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PetAsisten/VRM")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let target = root.appendingPathComponent(UUID().uuidString + ".vrm")
+            try data.write(to: target, options: .atomic)
+            petView.useVRM(target)
+        } catch {
+            chatPanel.append(role: "sistem", text: "Impor VRM gagal: " + error.localizedDescription)
+        }
+    }
+    @objc private func menuUse3D() {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("vrm/3D.vrm") else { return }
+        petView.useVRM(url)
+    }
+
+    @objc private func menuPlayVRMMotion(_ sender: NSMenuItem) {
+        guard petView.is3D, let name = sender.representedObject as? String else { return }
+        _ = petView.playIfAvailable(name)
+    }
+    @objc private func menuUseSprites() { petView.useSprites() }
 
     @objc private func menuOpenChat() { chatPanel.focusInput() }
 

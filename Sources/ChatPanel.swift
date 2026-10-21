@@ -33,6 +33,7 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
     private let poseLabel = NSTextField(labelWithString: "Pose")
     private let posePopup = NSPopUpButton()
     private let playPoseButton = NSButton()
+    private let poseHint = NSTextField(labelWithString: "Semua karakter • Pilih pose untuk langsung memutar")
     private var poseChoices: [CharacterSprite.PoseChoice] = []
     private let characterLabel = NSTextField(labelWithString: "Karakter")
     private let characterPopup = NSPopUpButton()
@@ -216,7 +217,6 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
         playPoseButton.action = #selector(namedPoseTapped)
         content.addSubview(playPoseButton)
 
-        let poseHint = NSTextField(labelWithString: "Semua karakter • Pilih pose untuk langsung memutar")
         poseHint.frame = NSRect(x: 80, y: 124, width: 338, height: 20)
         poseHint.autoresizingMask = [.width]
         poseHint.font = NSFont.systemFont(ofSize: 11)
@@ -260,6 +260,9 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
             posePopup.selectItem(withTitle: selected)
         }
         poseLabel.stringValue = "Pose (\(choices.count))"
+        poseHint.stringValue = !choices.isEmpty && choices.allSatisfy({ $0.characterID == "3D" })
+            ? "Gerakan 3D • Pilih untuk langsung memutar"
+            : "Semua karakter • Pilih pose untuk langsung memutar"
         posePopup.isEnabled = !choices.isEmpty
         playPoseButton.isEnabled = !choices.isEmpty
     }
@@ -272,11 +275,12 @@ final class ChatPanel: NSPanel, NSTextFieldDelegate {
     }
 
     func setCharacters(_ packs: [CharacterSprite.Pack], current id: String) {
-        characterIDs = packs.map(\.id)
+        characterIDs = packs.map(\.id) + ["3D"]
         characterPopup.removeAllItems()
         for pack in packs {
             characterPopup.addItem(withTitle: pack.label)
         }
+        characterPopup.addItem(withTitle: "3D")
         if let index = characterIDs.firstIndex(of: id) {
             characterPopup.selectItem(at: index)
         }

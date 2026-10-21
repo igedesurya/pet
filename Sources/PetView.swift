@@ -12,11 +12,62 @@ final class PetView: NSView {
     /// Karakter dari folder frame. Klip yang tidak ada memakai animasi lain
     /// dari paket yang sama.
     private let character = CharacterSprite()
+    private var vrmView: VRMView?
+    private var pendingVRM: VRMView?
+    var is3D: Bool { vrmView != nil }
+    var onVRMError: ((String) -> Void)?
+    var onRendererChange: (() -> Void)?
+
+    func useVRM(_ url: URL) {
+        pendingVRM?.close()
+        let candidate = VRMView()
+        pendingVRM = candidate
+        candidate.isHidden = true
+        addSubview(candidate)
+        candidate.frame = catRect
+        candidate.onLoaded = { [weak self, weak candidate] in
+            guard let self, let candidate, self.pendingVRM === candidate else { return }
+            self.pendingVRM = nil
+            self.vrmView?.close()
+            self.vrmView = candidate
+            candidate.isHidden = false
+            candidate.setState((CharacterSprite.stateClip[self.state] ?? .idle).rawValue)
+            UserDefaults.standard.set(url.path, forKey: VRMView.preferenceKey)
+            self.stopPose()
+            self.refreshLayout()
+            self.needsDisplay = true
+            self.onRendererChange?()
+        }
+        candidate.onError = { [weak self, weak candidate] message in
+            candidate?.close()
+            if self?.pendingVRM === candidate { self?.pendingVRM = nil }
+            if self?.vrmView === candidate { self?.useSprites() }
+            self?.onVRMError?(message)
+        }
+        candidate.open(url)
+    }
+
+    func useSprites() {
+        pendingVRM?.close()
+        pendingVRM = nil
+        vrmView?.close()
+        vrmView = nil
+        UserDefaults.standard.removeObject(forKey: VRMView.preferenceKey)
+        refreshLayout()
+        needsDisplay = true
+        onRendererChange?()
+    }
+
+    override func layout() {
+        super.layout()
+        vrmView?.frame = catRect
+    }
 
     var state: PetState = .idle {
         didSet {
             if state != oldValue {
                 stateTime = 0
+                vrmView?.setState((CharacterSprite.stateClip[state] ?? .idle).rawValue)
                 currentClip = CharacterSprite.stateClip[state] ?? .idle
             }
             needsDisplay = true
@@ -106,7 +157,7 @@ final class PetView: NSView {
                 if self.phase - self.overrideStart >= self.overrideHold {
                     self.finishOverride()
                 }
-            } else if self.state == .idle, self.phase >= self.nextVariationAt {
+            } else if !self.is3D, self.state == .idle, self.phase >= self.nextVariationAt {
                 self.startIdleVariation()
             }
             self.needsDisplay = true
@@ -124,7 +175,7 @@ final class PetView: NSView {
 
     private var spriteSize: NSSize {
         let height = PetView.baseHeight * scale
-        return NSSize(width: height * character.aspect, height: height)
+        return NSSize(width: height * (is3D ? 0.85 : character.aspect), height: height)
     }
 
     /// Luas karakter di dalam view (origin kiri-bawah).
@@ -145,6 +196,7 @@ final class PetView: NSView {
 
     /// Memuat paket gambar lain dan langsung menyesuaikan ukuran.
     func usePack(_ id: String) {
+        useSprites()
         character.load(pack: id)
         standbyCursor = 0
         stopPose()
@@ -157,11 +209,11 @@ final class PetView: NSView {
         refreshLayout()
     }
 
-    var packID: String { character.packID }
+    var packID: String { is3D ? "3D" : character.packID }
     var standbyChoices: [CharacterSprite.StandbyChoice] { character.standbyChoices }
     var standbyModeID: String { character.standbyModeID }
     var assetClipNames: [String] { character.assetClipNames }
-    var availableClipNames: [String] { character.namedAnimations.keys.sorted() }
+    var availableClipNames: [String] { is3D ? VRMMotion.entries.map(\.name) : character.namedAnimations.keys.sorted() }
     var activeClipName: String { overrideName ?? currentClip.rawValue }
     var pendingClipNames: [String] { queuedClips }
 
@@ -221,6 +273,11 @@ final class PetView: NSView {
     /// Memutar folder frame kalau paket karakter ini memilikinya.
     @discardableResult
     func playIfAvailable(_ name: String, hold: Double? = nil) -> Bool {
+        if is3D {
+            guard VRMView.clips.contains(name) else { return false }
+            play(named: name, hold: hold ?? VRMMotion.byName[name]?.duration ?? 6)
+            return true
+        }
         guard character.has(named: name) else { return false }
         play(named: name, hold: hold ?? character.duration(named: name))
         return true
@@ -238,6 +295,7 @@ final class PetView: NSView {
 
     @discardableResult
     func playSequence(_ names: [String]) -> Bool {
+        if is3D { return names.count == 1 && playIfAvailable(names[0]) }
         guard let first = names.first, names.allSatisfy({ character.has(named: $0) }) else { return false }
         queuedClips = Array(names.dropFirst())
         beginClip(named: first, hold: character.duration(named: first))
@@ -245,6 +303,7 @@ final class PetView: NSView {
     }
 
     private func beginClip(named name: String, hold: Double) {
+        vrmView?.play(name, duration: hold)
         currentPose = nil
         overrideName = name
         overrideHold = hold
@@ -256,6 +315,7 @@ final class PetView: NSView {
     /// (0 = pakai durasi animasi). Untuk gestur pose (duduk, regang, dst)
     /// dipakai nilai yang lebih panjang supaya terasa "standby".
     func play(_ pose: PetPose, hold: Double? = nil) {
+        if is3D { play(named: pose.clip.rawValue, hold: hold ?? pose.holdDuration); return }
         queuedClips.removeAll()
         currentPose = pose
         overrideName = pose.clip.rawValue
@@ -266,6 +326,7 @@ final class PetView: NSView {
 
     /// Menghentikan gestur dan kembali ke animasi status.
     func stopPose() {
+        vrmView?.play("idle", duration: 0.1)
         queuedClips.removeAll()
         currentPose = nil
         overrideName = nil
@@ -395,6 +456,7 @@ final class PetView: NSView {
     /// Menyesuaikan ukuran window. Titik tengah-bawah tetap, jadi pet tumbuh
     /// ke atas dan ke samping tanpa melompat.
     func refreshLayout() {
+        needsLayout = true
         guard let window else { return }
 
         let bubble = bubbleHeight()
@@ -431,7 +493,7 @@ final class PetView: NSView {
             clipTime = phase - overrideStart
         }
 
-        _ = character.drawAvailable(named: clipName, time: clipTime, in: catRect)
+        if !is3D { _ = character.drawAvailable(named: clipName, time: clipTime, in: catRect) }
 
         drawBubble()
     }
